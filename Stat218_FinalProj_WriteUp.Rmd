@@ -102,7 +102,7 @@ fires_usa_clean |>
   theme(plot.title = element_text(hjust = 0.5))
 ```
 ```{r fig.width = 3.5, fig.height = 3}
-# regions of US - lightning
+# Class A
 fires_usa_clean |>
   filter(fire_size_class %in% "A") |>
   sample_n(10000) |>
@@ -116,23 +116,7 @@ fires_usa_clean |>
   theme_minimal() + 
   annotate("text", x = -128, y = 45, label = "A", size = 6, fontface = "bold")
 
-# # regions of US - lightning
-# fires_usa_clean |>
-#   filter(fire_size_class %in% "A" | fire_size_class %in% "B") |>
-#   sample_n(5000) |>
-#   ggplot() +
-#   geom_polygon(data = us_outline, aes(x = long, y = lat, group = group),
-#                fill = NA, color = "black", linewidth = 0.3) +
-#   geom_point(aes(x = longitude, y = latitude, color = fire_size_class),
-#              alpha = 0.5, size = 1) +
-#   scale_color_manual(values = size_colors, limits = size_levels) +
-#   coord_equal() +
-#   labs(title = "Size Class A or B", x = "Longitude", y = "Latitude") +
-#   theme_minimal() + 
-#   annotate("text", x = -128, y = 45, label = "A", size = 6, fontface = "bold") +
-#   theme(legend.position = NULL)
-
-# regions of US - debris burning
+# Class C
 fires_usa_clean |>
   filter(fire_size_class %in% "C") |>
   sample_n(10000) |>
@@ -146,7 +130,7 @@ fires_usa_clean |>
   theme_minimal() + 
   annotate("text", x = -128, y = 45, label = "B", size = 6, fontface = "bold")
 
-# regions of US - mis
+# Class G
 fires_usa_clean |>
   filter(fire_size_class %in% "G") |>
   ggplot() +
@@ -257,9 +241,6 @@ To better visualize how the SVM model separates fire size class spatially, we ca
 lat_lon_grid <- expand.grid(longitude = seq(min(subset_fire_data_model$longitude), max(subset_fire_data_model$longitude), length.out = 100),
                             latitude = seq(min(subset_fire_data_model$latitude), max(subset_fire_data_model$latitude), length.out = 100))
 
-# lat_lon_grid <- lat_lon_grid |>
-#   mutate(fire_size_class = factor("C", levels = levels(subset_fire_data_model$fire_size_class)))
-
 lat_lon_grid$pred <- predict(svm_simple, newdata = lat_lon_grid)
 ```
 
@@ -290,7 +271,7 @@ library(knitr)
 library(kableExtra)
 ```
 
-```{r echo = TRUE, code-summary: "Predictions Code"}
+```{r echo = TRUE}
 # Quantifying performance
 svm_predictions <- predict(svm_simple, newdata = testing_data)
 
@@ -299,7 +280,7 @@ conf_matrix <- table(Predicted = svm_predictions, Actual = testing_data$fire_siz
 kable(conf_matrix, caption = "Confusion Matrix: Simple SVM Predictions") |>
   kable_styling(full_width = FALSE, position = "left", font_size = 14)
 ```
-```{r echo = TRUE, code-summary: "Accuracy Calculations Code"}
+```{r echo = TRUE}
 # Overall accuracy
 total <- sum(conf_matrix)
 correct <- sum(diag(conf_matrix))
@@ -312,7 +293,7 @@ data.frame(Metric = "Overall Accuracy",
 ```
 <br>
 Accuracy can be calculated within fire size classes to quantify how well the model predicts each fire size class. 
-```{r echo = TRUE, code-summary: "Class Accuracy Calculations Code"}
+```{r echo = TRUE}
 svm_error <- round(diag(conf_matrix) / colSums(conf_matrix), 2)
 
 kable(as.data.frame(svm_error), 
@@ -328,7 +309,7 @@ Improving performance on these more 'rare', larger fire categories will require 
 ### *Expanding complexity and applicability*
 This version of the SVM model incorporates month of year as a categorical predictor. This can be considered a basic metric of seasonality that is easily available when a fire is reported can improve predictions. Because fire behavior varies with time of year and region, this simple temporal component could help the model better separate small and large fires that happen in the same place but at different times.
 
-```{r echo = TRUE, code-summary: "SVM Time Model Code"}
+```{r echo = TRUE}
 # Build out complexity of SVM model
 training_data_2 <- training_data 
 
@@ -364,7 +345,7 @@ ggplot(lat_lon_grid_time, aes(x = longitude, y = latitude, fill = pred)) +
   theme(plot.title = element_text(hjust = 0.5))
 ```
 
-```{r echo = TRUE, code-summary: "Accuracy Calculation Code"}
+```{r echo = TRUE}
 # Make predictions
 svm_predictions_time <- predict(svm_time, newdata = testing_data_2)
 
@@ -385,7 +366,7 @@ data.frame(Metric = "Overall Accuracy",
   kable_styling(full_width = FALSE, position = "left", font_size = 14)
 ```
 
-```{r echo = TRUE, code-summary: "Class Accuracy Error Calculations Code"}
+```{r echo = TRUE}
 svm_error_2 <- round(diag(conf_matrix_2) / colSums(conf_matrix_2), 2)
 
 kable(as.data.frame(svm_error_2), 
@@ -406,8 +387,8 @@ To improve the predictive power of this model, particularly for rare large fires
 svm_fire_model <- svm(fire_size_class ~ latitude + longitude + Month,
                       data = training_data_2,
                       kernel = "radial", 
-                      cost = 100, # controls margin vs misclassification tradeoff
-                      gamma = 0.5, # controls the influence of a single training example
+                      cost = 100, # control on misclassification
+                      gamma = 0.5, # controls influence of one datapoint
                       scale = TRUE)
 ```
 
@@ -429,7 +410,7 @@ class_weights <- c(A = 1,
                    F = 10, 
                    G = 15) # prioritizing larger fire size classes
 ```
-```{r echo = TRUE, warning = FALSE, code-summary: "SVM Model Code"}
+```{r echo = TRUE, warning = FALSE}
 fire_models_svm <- svm(fire_size_class ~ latitude + longitude + Month,
                     data = training_data_2,
                     kernel = "radial",
@@ -440,14 +421,14 @@ fire_models_svm <- svm(fire_size_class ~ latitude + longitude + Month,
 
 # limiting computational expense with cross-fold validation and tuning length
 ```
-```{r echo = TRUE, warning = FALSE,  code-summary: "kNN Model Code"}
+```{r echo = TRUE, warning = FALSE}
 fire_models_knn <- train(fire_size_class ~ latitude + longitude + Month,
                           data = training_data_2,
                           method = "knn",
                           trControl = trainControl(method = "cv", number = 5),
                           tuneLength = 3) 
 ```
-```{r echo = TRUE, warning = FALSE,  code-summary: "Random Forest Model Code"}
+```{r echo = TRUE, warning = FALSE}
 
 
 class_weights <- class_weights[levels(training_data_2$fire_size_class)]
@@ -461,14 +442,14 @@ fire_models_rf <- ranger(fire_size_class ~ latitude + longitude + Month,
                    importance = "impurity")
 ```
 
-```{r echo = TRUE, code-summary: "Prediction Code"}
+```{r echo = TRUE}
 # Make predictions
 svm_predictions_2 <- predict(fire_models_svm, newdata = testing_data_2)
 knn_predictions <- predict(fire_models_knn, newdata = testing_data_2)
 rf_predictions <- predict(fire_models_rf, data = testing_data_2)$predictions
 ```
 
-```{r echo = TRUE, code-summary: "Error Calculation Code"}
+```{r echo = TRUE}
 # Confusion matrices
 conf_matrix_svm_2 <- table(Predicted = svm_predictions_2, Actual = testing_data_2$fire_size_class)
 conf_matrix_knn <- table(Predicted = knn_predictions, Actual = testing_data_2$fire_size_class)
@@ -538,10 +519,6 @@ final_rf_model <- ranger(fire_size_class ~ latitude + longitude + Month,
                          verbose = FALSE) 
 ```
 ```{r  warning = FALSE}
-# # Assess OOB Accuracy
-# final_rf_model$prediction.error
-```
-```{r  warning = FALSE}
 # Predict on testing
 rf_predictions <- predict(final_rf_model, data = fire_full_testing)$predictions
 
@@ -551,26 +528,22 @@ conf_matrix_rf <- table(Predicted = rf_predictions, Actual = fire_full_testing$f
 # Accuracy
 accuracy_rf <- sum(diag(conf_matrix_rf)) / sum(conf_matrix_rf)
 
-# Class-level error
+# Class-scale error
 class_error <- function(conf_matrix) {
   round(diag(conf_matrix) / colSums(conf_matrix), 2)}
 rf_class_error <- class_error(conf_matrix_rf)
 
 ```
 ```{r  warning = FALSE}
-# Create overall accuracy data frame
-overall_accuracy <- data.frame(
-  Metric = "Overall Accuracy",
-  Value = paste0(round(accuracy_rf *100, 2), "%")
-)
+# Overall accuracy 
+overall_accuracy <- data.frame(Metric = "Overall Accuracy",
+                               Value = paste0(round(accuracy_rf *100, 2), "%"))
 
-# Create class-level accuracy table
-class_accuracy <- data.frame(
-  Class = names(rf_class_error),
-  Accuracy = round(rf_class_error, 2)
-)
+# Table up class-level
+class_accuracy <- data.frame(Class = names(rf_class_error),
+                             Accuracy = round(rf_class_error, 2))
 
-# Print both tables
+# Print
 kable(overall_accuracy, caption = "Overall Accuracy",  col.names = NULL) |>
   kable_styling(full_width = FALSE, position = "left", font_size = 14)
 
