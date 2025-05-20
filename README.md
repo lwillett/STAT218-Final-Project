@@ -3,7 +3,7 @@ This is a final project for STAT218 in which I explore whether we can predict ho
 I learned and implemented a Support Vector Machine (SVM) and compared to other modeling techniques to assess how well they perform with these simple inputs, and whether they could help with early wildfire response.
 
 📄 **The report**:  
-[Wildfire_Model.html](./docs/index.html)
+[Wildfire_Model.html](./docs/Stat218_FinalProj_WriteUp.html)
 
 ## Author
 **Lake Willett**  
