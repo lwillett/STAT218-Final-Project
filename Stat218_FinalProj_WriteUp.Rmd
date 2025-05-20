@@ -1,0 +1,597 @@
+---
+title: "Predicting Wildfire Size Class Across the Continental U.S."
+author: "LAKE WILLETT"
+date: "2025-05-20"
+format:
+  html:
+    toc: true
+    code-overflow: wrap
+    code-fold: true
+    embed-resources: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      cache = TRUE, 
+                      warning = FALSE)
+```
+***
+# Introduction
+## Background
+Wildfires are an increasing concern, particularly across the western United States, as their frequency and intensity increase. Having an understanding of the likely size of a fire in its early stages supports emergency response, resource allocation, and risk mitigation. Detailed information on fire behavior controls, such as wind speed or fuel moisture, is rarely available at the time of ignition. Location and timing, however, are well-constrained at this early stage. This project explores whether these simple spatial and temporal features can be used to predict the final size class of a wildfire. If basic inputs like latitude, longitude, and time of year hold meaningful predictive power, they could enable faster, more scalable fire classification - which is particularly meaningful in in regions with limited data or resources. While sophisticated fire reach models often exploit on a wide range of environmental variables to achieve high accuracy, this project focuses on evaluating how well a simplified model can perform using minimal inputs. <br>
+
+
+## Data
+```{r include = FALSE, warning = FALSE}
+# load packages
+library(tidyverse)
+library(DBI)
+library(RSQLite)
+library(maps)
+library(janitor)
+```
+```{r include = FALSE, warning = FALSE}
+# load data
+con <- dbConnect(RSQLite::SQLite(), "/Users/admin/Desktop/Stat Learning/Final Project/FPA_FOD_20170508.sqlite")
+dbListTables(con)  
+fires_usa <- dbReadTable(con, "Fires")
+```
+```{r include = FALSE, warning = FALSE}
+# clean
+fires_usa_clean <- fires_usa |>
+  clean_names()
+```
+
+*Description*
+</br>
+This analysis uses the Fire Program Analysis Fire-Occurrence Database (FPA-FOD), a national compilation of fire records from federal, state, and local agencies in the U.S. The dataset contains over 1.8 million fire records from 1992–2015 and includes information on location, size, and reported cause. To focus on more recent, consistently reported events and to reduce computational load, I limited the dataset to fires in the continental U.S. after 2000.
+</br>
+
+*Wrangling*
+</br>
+Each fire record includes latitude, longitude, year, size, and size class. Size classes represent final burned area and are defined as follows: A (≤ 0.25 acres), B (0.26 - 9.9), C (10 - 99.9), D (100 - 299), E (300 - 999), F (1000 - 4999), and G (5000+ acres).
+```{r}
+fires_usa_clean <- fires_usa_clean |>
+  filter(fire_year > 2000) |> # filtering to years after 2000 (preserving 15 year fire record)
+  filter(latitude >= 24, latitude <= 50, # filtering to continental US
+         longitude >= -125, longitude <= -66)
+```
+```{r}
+fires_usa_clean <- fires_usa_clean |> 
+  filter(!is.na(discovery_doy)) |>    
+  mutate(Month = ceiling(discovery_doy / 30.5)) |>
+  mutate(Month = factor(month.name[Month], levels = month.name))
+```
+
+*Initial Visualizations*
+</br>
+The map below show a sample of fire locations (n = 10,000; n = 5,000) and their reported fire class size. Class A fires are small and are widely distributed across the contiguous U.S.; these fires are particularly dense in the East and along the West Coast. Class C, moderately sized fires are common across the country, but appear more dense in California and the Southern U.S. (eg: Texas) in contrast to Class A. Class G (the largest fires) are rare and cluster in the West, especially in areas like the Northern Rockies, California, and the Southwest, which reflects regions that are known to be more prone to large-scale wildfires. <br>
+
+```{r fig.width = 7, fig.height = 5}
+us_outline <- map_data("state")
+
+# Visualization palette 
+size_levels <- c("A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G")
+
+size_colors <- c("A"   = "#61210f",
+                  "B"        = "#99000d",
+                  "C"    = "#ef3b2c",
+                  "D"      = "#fc9272",
+                  "E"          = "#edae49",
+                  "F"   = "#fee08b",
+                  "G" = "#F7FFB3")
+
+# plot subset of 10,000
+fires_usa_clean |>
+  sample_n(10000) |>
+  ggplot() +
+  geom_polygon(data = us_outline, aes(x = long, y = lat, group = group),
+               fill = NA, color = "black", linewidth = 0.3) +
+  geom_point(aes(x = longitude, y = latitude, color = fire_size_class),
+             alpha = 0.7, size = 1) +
+  scale_color_manual(values = size_colors, limits = size_levels) +
+  coord_equal() +
+  labs(title = "Fire Location by Size Class", x = "Longitude", y = "Latitude", color = "Size Class") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+```{r fig.width = 3.5, fig.height = 3}
+# regions of US - lightning
+fires_usa_clean |>
+  filter(fire_size_class %in% "A") |>
+  sample_n(10000) |>
+  ggplot() +
+  geom_polygon(data = us_outline, aes(x = long, y = lat, group = group),
+               fill = NA, color = "black", linewidth = 0.3) +
+  geom_point(aes(x = longitude, y = latitude),
+             alpha = 0.5, size = 1, color = "#61210f") +
+  coord_equal() +
+  labs(title = "Class A - Small", x = "Longitude", y = "Latitude") +
+  theme_minimal() + 
+  annotate("text", x = -128, y = 45, label = "A", size = 6, fontface = "bold")
+
+# # regions of US - lightning
+# fires_usa_clean |>
+#   filter(fire_size_class %in% "A" | fire_size_class %in% "B") |>
+#   sample_n(5000) |>
+#   ggplot() +
+#   geom_polygon(data = us_outline, aes(x = long, y = lat, group = group),
+#                fill = NA, color = "black", linewidth = 0.3) +
+#   geom_point(aes(x = longitude, y = latitude, color = fire_size_class),
+#              alpha = 0.5, size = 1) +
+#   scale_color_manual(values = size_colors, limits = size_levels) +
+#   coord_equal() +
+#   labs(title = "Size Class A or B", x = "Longitude", y = "Latitude") +
+#   theme_minimal() + 
+#   annotate("text", x = -128, y = 45, label = "A", size = 6, fontface = "bold") +
+#   theme(legend.position = NULL)
+
+# regions of US - debris burning
+fires_usa_clean |>
+  filter(fire_size_class %in% "C") |>
+  sample_n(10000) |>
+  ggplot() +
+  geom_polygon(data = us_outline, aes(x = long, y = lat, group = group),
+               fill = NA, color = "black", linewidth = 0.3) +
+  geom_point(aes(x = longitude, y = latitude),
+             alpha = 0.5, size = 1, color = "#ef3b2c") +
+  coord_equal() +
+  labs(title = "Class C - Medium", x = "Longitude", y = "Latitude") +
+  theme_minimal() + 
+  annotate("text", x = -128, y = 45, label = "B", size = 6, fontface = "bold")
+
+# regions of US - mis
+fires_usa_clean |>
+  filter(fire_size_class %in% "G") |>
+  ggplot() +
+  geom_polygon(data = us_outline, aes(x = long, y = lat, group = group),
+               fill = NA, color = "black", linewidth = 0.3) +
+  geom_point(aes(x = longitude, y = latitude),
+             alpha = 0.5, size = 1, color = "#F7FFB3") +
+  coord_equal() +
+  labs(title = "Class G - Large", x = "Longitude", y = "Latitude") +
+  theme_minimal() + 
+  annotate("text", x = -128, y = 45, label = "C", size = 6, fontface = "bold")
+```
+</br>
+The distribution of fire size is highly imbalanced, as shown by the figure below. Most fires are relatively small, classified as A or B; this is a pattern in the data that will affect predictive model performance. 
+</br>
+</br>
+```{r fig.height = 4.5, fig.width - 4.5}
+fire_cause_summary <- fires_usa_clean |>
+  filter(fire_year > 2000) |> 
+  count(fire_size_class, sort = TRUE) |>  
+  mutate(percent = round(n / sum(n) * 100, 1))  
+
+fire_cause_summary |>
+  ggplot() +
+  geom_col(aes(x = reorder(fire_size_class, -percent), y = percent), fill = "black") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(title = "Percentage of Fires by Class Size\n(2000 - 2015)",
+       x = "Fire Class",
+       y = "Percent of Total Fires")
+```
+</br>
+
+***
+# Research Questions
+- *Can we reliably predict the size class of a wildfire?*
+- *How can we balance simplicity and effectiveness in this fire model - is it possible to build an applicable and useful model based only on when and where a fire occurred to support early management strategies?*
+- *How does a Support Vector Machine (SVM) model perform compared to other approaches, such as k-Nearest Neighbors and Random Forest, in predicting fire size class with limited information?*
+
+
+
+***
+# Modeling Wildfire Size
+```{r warning = FALSE}
+library(e1071) 
+```
+```{r}
+# Clean up data for purposes of modeling 
+# make variables a factor
+fire_data_model <- fires_usa_clean |>
+  filter(!is.na(fire_size_class)) |>        
+  filter(!is.na(discovery_doy)) |>  
+  select(latitude, longitude,fire_size_class, fire_size, fire_year, discovery_doy, Month) |>
+  mutate(fire_size_class = factor(fire_size_class))
+```
+```{r}
+# subset
+set.seed(1)
+subset_fire_data_model <- fire_data_model |>
+  sample_n(10000)
+```
+```{r}
+# Split training / testing
+set.seed(1)
+
+training_data_rows <- sample(1:nrow(subset_fire_data_model), 
+                             size = nrow(subset_fire_data_model)/2) 
+
+training_data <- subset_fire_data_model[training_data_rows, ]
+testing_data <- subset_fire_data_model[-training_data_rows, ] 
+```
+
+## SVM
+In the classification context, Support Vector Machines (SVMs) are algorithms that separate data into classes by finding the *optimal* hyperplane(s) (two-dimensional plane) that best separates classes from one another. The optimal hyperplane is one that maximizes the distance between the hyperplane and the closest data point(s) from each class. This plane becomes the 'decision boundary' for classifying new data points. <br>
+SVMs are useful in cases where:<br>
+
+- The boundary between groups is not necessarily linear <br>
+- There is a significant class imbalance, as is evident in this fire dataset, where most observations fall into the smallest fire size classes <br>
+
+This makes SVM a reasonable model candidate for this project.
+
+
+
+### *Constructing model*
+```{r echo = TRUE, code-summary: "Simple SVM Code"}
+# Simple SVM model
+svm_simple <- svm(fire_size_class ~ longitude + latitude,
+                  data = subset_fire_data_model, # Trained on a subset
+                  kernel = "radial", 
+                  cost = 100)
+```
+This SVM model is trained on a random subset of 10,000 fires with two predictors (longitude and latitude). The goal of such a simple classifier is to predict fire size (class) based only on its geographic location. In this model, each fire is as a point in a two-dimensional latitude-longtidue space. The SVM is attempting to find the decision boundaries in this space that will optimize the distance, as described above, and thus best separate fires of different size classes. Because fire size classes cannot be cleanly divided by straight lines in geographic space (which we can see visualized above), a radial basis function (RBF) kernel transforms the input data into a higher-dimensional space, from which the model can learn more complex boundaries. Specifically, this method transforms each point based on its distance to every other point, which projects it into a space where its relative closeness to different groups becomes more meaningful. In this space is where the SVM finds a linear hyperplane separating between classes; this hyperplane is what is the non-linear boundary in the original two-dimensional space. <br>
+Two important tuning parameters are cost and gamma. <br>
+
+- Cost (eg: 1, 10, 100) determines how heavily the model penalizes misclassifications. A low cost tells the model to ignore some misclassifications in order to keep the decision boundary simple and the distance between the hyperplane and the nearest points large. A high cost, on the other hand, avoids misclassifying training points by creating a more complex/narrow decision boundary, potentially at the cost of overfitting to training data. <br>
+
+- Gamma (defined as 1/numer of input variables), though not explicitly defined in this model, controls how much an individual point influences the decision boundary. A high gamma forces the model to focus very closely around each training point, which makes it sensitive to small patterns in the data. A low gamma means each point has a larger 'buffer', which allows the model to represent more generalized patterns in the data - this creates smoother decision boundary lines. <br>
+
+- This SVM model, by default, scales the predictor variables.
+
+
+
+
+### *Visualizing decision space*
+To better visualize how the SVM model separates fire size class spatially, we can visualize model predictions for the most likely class of a fire at every location across a synthetic grid of latitude and longitude (inclusive of the US). This visualization demonstrates the model’s decision boundaries - i.e. where it separates one class from another - based solely on geographic features, not its accuracy on real fires.
+```{r include = TRUE}
+# Make predictions (across all lat lon)
+lat_lon_grid <- expand.grid(longitude = seq(min(subset_fire_data_model$longitude), max(subset_fire_data_model$longitude), length.out = 100),
+                            latitude = seq(min(subset_fire_data_model$latitude), max(subset_fire_data_model$latitude), length.out = 100))
+
+# lat_lon_grid <- lat_lon_grid |>
+#   mutate(fire_size_class = factor("C", levels = levels(subset_fire_data_model$fire_size_class)))
+
+lat_lon_grid$pred <- predict(svm_simple, newdata = lat_lon_grid)
+```
+
+```{r fig.height = 5, fig.width = 10}
+# Visualize spatial 
+ggplot() +
+  geom_tile(data = lat_lon_grid, aes(x = longitude, y = latitude, fill = pred), alpha = 0.5) +
+  geom_polygon(data = us_outline, aes(x = long, y = lat, group = group),
+               fill = NA, color = "black", linewidth = 0.3) +
+  geom_point(data = subset_fire_data_model, aes(x = longitude, y = latitude, color = fire_size_class), alpha = 0.7) +
+  scale_fill_manual(values = size_colors) +
+  scale_color_manual(values = size_colors) +
+  labs(title = "Predictions Across Latitude/Longitude Space",
+       x = "Longitude", y = "Latitude", fill = "Predicted Size Class",
+       color = "Actual Size Class") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+The background color reflects the prediction regions of the model across this synthetic space, reflecting that the model predicts only either a class A (very small) or a class B (small) fire. The fact that the model only predicts classes A and B aligns with their dominance in the dataset; the model is learning most from the most frequent classes and is largely ignoring rarer, larger fires (classes C - G). <br>
+*Note: this visualization is constructed on a subset of 10,000 fires. The synthetic grid is 100×100 resolution across the visualized space, which means areas without fire activity (i.e. the ocean) are predicted.*
+<br>
+
+### *Making predictions*
+Testing the model's performance on real fire data that was not used during training provides a clearer sense of how well the SVM might generalize to new fire data. <br>
+The confusion matrix below compares the predicted causes (rows) with the actual reported causes (columns).
+```{r warning = FALSE, include = FALSE}
+library(knitr)
+library(kableExtra)
+```
+
+```{r echo = TRUE, code-summary: "Predictions Code"}
+# Quantifying performance
+svm_predictions <- predict(svm_simple, newdata = testing_data)
+
+# Confusion matrix
+conf_matrix <- table(Predicted = svm_predictions, Actual = testing_data$fire_size_class)
+kable(conf_matrix, caption = "Confusion Matrix: Simple SVM Predictions") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+```
+```{r echo = TRUE, code-summary: "Accuracy Calculations Code"}
+# Overall accuracy
+total <- sum(conf_matrix)
+correct <- sum(diag(conf_matrix))
+accuracy <- round(correct / total, 3)
+
+data.frame(Metric = "Overall Accuracy",
+           Value = paste0(round(accuracy * 100, 2), "%")) |>
+  kable(caption = "Overall Model Accuracy", col.names = NULL) |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+```
+<br>
+Accuracy can be calculated within fire size classes to quantify how well the model predicts each fire size class. 
+```{r echo = TRUE, code-summary: "Class Accuracy Calculations Code"}
+svm_error <- round(diag(conf_matrix) / colSums(conf_matrix), 2)
+
+kable(as.data.frame(svm_error), 
+      col.names = c("Accuracy (%)"), 
+      caption = "Classification Accuracy by Size Class")  |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+```
+An overall accuracy of ~61% is modest, but given that the model is only using only the geographic coordinates of the fire as a predictor, this performance can be considered notable. It suggests that latitude and longitude alone contain some signal about fire size - particularly for distinguishing between the two most common classes, A and B. The model creates some spatial distinction between these fires - predicting more class A fires in the Intermountain West and parts of the Southwest and predicting more class B fires predictions across the Southeast and Mid-Atlantic. The confusion matrix and class level error assessment, however, reveal that the model is heavily biased toward the dominant classes A and B; it is completely ignoring (and misclassifying) less common size classes.
+Improving performance on these more 'rare', larger fire categories will require either more predictive power or specific tuning to handle the class imbalance.<br>
+
+
+
+### *Expanding complexity and applicability*
+This version of the SVM model incorporates month of year as a categorical predictor. This can be considered a basic metric of seasonality that is easily available when a fire is reported can improve predictions. Because fire behavior varies with time of year and region, this simple temporal component could help the model better separate small and large fires that happen in the same place but at different times.
+
+```{r echo = TRUE, code-summary: "SVM Time Model Code"}
+# Build out complexity of SVM model
+training_data_2 <- training_data 
+
+testing_data_2 <- testing_data
+
+svm_time <- svm(fire_size_class ~ latitude + longitude + Month, # adding time component - month 
+                      data = training_data_2,
+                      kernel = "radial",
+                      scale = TRUE)
+```
+
+```{r}
+lat_lon_grid_time <- expand.grid(longitude = seq(min(subset_fire_data_model$longitude), max(subset_fire_data_model$longitude), length.out = 100),
+                            latitude = seq(min(subset_fire_data_model$latitude), max(subset_fire_data_model$latitude), length.out = 100),
+                            Month = factor(month.name, levels = month.name)) # monthly predictions
+
+lat_lon_grid_time$pred <- predict(svm_time, newdata = lat_lon_grid_time)
+```
+The visualizations below represent the spatial predictions of the model shifting over the course of the calendar year. The model continues to predict primarily Class A and B fires, which is consistent with the overall data imbalance. There model extracts what could be interpreted as a seasonal pattern. Generally, the most significant change in the spatial distribution of these predictions occurs in March and April, where class B fires become the dominant prediction across the Northeast, Midwest, and parts of the Intermountain West. 
+
+```{r fig.height = 5, fig.width = 10}
+ggplot(lat_lon_grid_time, aes(x = longitude, y = latitude, fill = pred)) +
+  geom_tile(alpha = 0.5) +
+  geom_polygon(data = us_outline, aes(x = long, y = lat, group = group),
+               fill = NA, color = "black", linewidth = 0.3) +
+  facet_wrap(~ Month, ncol = 4) +
+  coord_equal() +
+  scale_fill_manual(values = size_colors) +
+  theme_minimal() +
+  labs(title = "Geographic and Temporal Prediction Space",
+       x = "Latitude", y = "Longitude",
+       fill = "Predicted Class") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r echo = TRUE, code-summary: "Accuracy Calculation Code"}
+# Make predictions
+svm_predictions_time <- predict(svm_time, newdata = testing_data_2)
+
+# Confusion matrix
+conf_matrix_2 <- table(Predicted = svm_predictions_time, Actual = testing_data$fire_size_class)
+kable(conf_matrix_2, caption = "Confusion Matrix: Temporal SVM Predictions") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+```
+```{r}
+# Overall accuracy
+total_2 <- sum(conf_matrix_2)
+correct_2 <- sum(diag(conf_matrix_2))
+accuracy_2 <- round(correct_2/ total_2, 3)
+
+data.frame(Metric = "Overall Accuracy",
+           Value = paste0(round(accuracy_2 * 100, 2), "%")) |>
+  kable(caption = "Overall Model Accuracy", col.names = NULL) |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+```
+
+```{r echo = TRUE, code-summary: "Class Accuracy Error Calculations Code"}
+svm_error_2 <- round(diag(conf_matrix_2) / colSums(conf_matrix_2), 2)
+
+kable(as.data.frame(svm_error_2), 
+      col.names = c("Accuracy (%)"), 
+      caption = "Classification Accuracy by Size Class")  |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+```
+With the addition of month as a predictor, overall accuracy does not change significantly from the base model. The confusion matrix still shows the complete dominance of Class A and B predictions. While prediction of larger fire size classes remains limited, this version introduces a useful temporal dimension. The shifts in prediction space suggests the model is learning some coarse seasonal structure based on the timing of the fire - even without weather, fuel, or vegetation data. Though still an incredible oversimplification, this step brings the model closer to applicability in real-world fire dynamic modeling where simple inputs, like time of year, can improve early response or prioritization strategies.
+
+
+
+## Model Comparisons
+### *Refining the simplest SVM model*
+To improve the predictive power of this model, particularly for rare large fires, the SVM can be tuned with the cost and gamma parameters. In the context of this data and model, it is more important to prioritize overpredicting large fires rather than missing them, since the consequences of underestimating a large event are more severe. Therefore, a high cost is defined in order to help the model identify less frequent classes, whereas a high gamma is defined with the intention of forcing the model to pay closer attention to small clusters of large fires.
+
+```{r warning = FALSE, echo = TRUE,  code-summary: "SVM Example Code"}
+# Build out complexity of SVM model
+svm_fire_model <- svm(fire_size_class ~ latitude + longitude + Month,
+                      data = training_data_2,
+                      kernel = "radial", 
+                      cost = 100, # controls margin vs misclassification tradeoff
+                      gamma = 0.5, # controls the influence of a single training example
+                      scale = TRUE)
+```
+
+
+
+### *Comparison to other classifiers*
+To contextualize the performance of SVM in comparison to other algorithms, we can compare it to two alternative classifiers using the same predictors of latitude, longitude, and month of the year. SVM and Random Forest are performed on weighted classes in order to counterbalance severe class imbalance.
+```{r warning = FALSE, include = FALSE}
+library(caret)
+library(kernlab)
+library(ranger)
+```
+```{r echo = TRUE, warning = FALSE, code-summary: "Tuning Parameters"}
+class_weights <- c(A = 1, 
+                   B = 1, 
+                   C = 2, 
+                   D = 3, 
+                   E = 5, 
+                   F = 10, 
+                   G = 15) # prioritizing larger fire size classes
+```
+```{r echo = TRUE, warning = FALSE, code-summary: "SVM Model Code"}
+fire_models_svm <- svm(fire_size_class ~ latitude + longitude + Month,
+                    data = training_data_2,
+                    kernel = "radial",
+                    cost = 100,
+                    gamma = 0.5,
+                    class.weights = class_weights,
+                    scale = TRUE)
+
+# limiting computational expense with cross-fold validation and tuning length
+```
+```{r echo = TRUE, warning = FALSE,  code-summary: "kNN Model Code"}
+fire_models_knn <- train(fire_size_class ~ latitude + longitude + Month,
+                          data = training_data_2,
+                          method = "knn",
+                          trControl = trainControl(method = "cv", number = 5),
+                          tuneLength = 3) 
+```
+```{r echo = TRUE, warning = FALSE,  code-summary: "Random Forest Model Code"}
+
+
+class_weights <- class_weights[levels(training_data_2$fire_size_class)]
+
+fire_models_rf <- ranger(fire_size_class ~ latitude + longitude + Month,
+                   data = training_data_2,
+                   num.trees = 500,
+                   probability = FALSE,
+                   classification = TRUE,
+                   class.weights = class_weights,
+                   importance = "impurity")
+```
+
+```{r echo = TRUE, code-summary: "Prediction Code"}
+# Make predictions
+svm_predictions_2 <- predict(fire_models_svm, newdata = testing_data_2)
+knn_predictions <- predict(fire_models_knn, newdata = testing_data_2)
+rf_predictions <- predict(fire_models_rf, data = testing_data_2)$predictions
+```
+
+```{r echo = TRUE, code-summary: "Error Calculation Code"}
+# Confusion matrices
+conf_matrix_svm_2 <- table(Predicted = svm_predictions_2, Actual = testing_data_2$fire_size_class)
+conf_matrix_knn <- table(Predicted = knn_predictions, Actual = testing_data_2$fire_size_class)
+conf_matrix_rf <- table(Predicted = rf_predictions, Actual = testing_data_2$fire_size_class)
+
+# Iteratively quantify accuracy
+accuracy_funct <- function(conf_matrix) {
+  total <- sum(conf_matrix)
+  correct <- sum(diag(conf_matrix))
+  accuracy <- round(correct / total, 3)
+  return(accuracy)
+}
+
+error_svm <- accuracy_funct(conf_matrix_svm_2)
+error_knn <- accuracy_funct(conf_matrix_knn)
+error_rf  <- accuracy_funct(conf_matrix_rf)
+
+# Table up
+data.frame(Model = c("SVM", "k-Nearest Neighbors", "Random Forest"),
+           Accuracy = c(error_svm, error_knn, error_rf)) |>
+  kable(caption = "Model Comparison: Overall Accuracy") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+```
+
+```{r}
+# Classification accuracy by class
+class_error <- function(conf_matrix) {
+  round(diag(conf_matrix) / colSums(conf_matrix), 2)}
+
+# Iteratively calculate
+svm_class_error <- class_error(conf_matrix_svm_2)
+knn_class_error <- class_error(conf_matrix_knn)
+rf_class_error  <- class_error(conf_matrix_rf)
+
+# Table up
+data.frame(SVM = svm_class_error,
+           kNN = knn_class_error,
+           RandomForest = rf_class_error) |> 
+  kable(caption = "Classification Accuracy by Size Class", digits = 2) |> 
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+```
+
+
+#### *Full Dataset Prediction*
+Given the relative similarity in performance and computational limitations, predictions can be expanded to the full dataset using the Random Forest (ranger) model. 
+```{r}
+# Split full dataset into testing training
+fire_full_data <- fires_usa_clean |>
+  select(fire_size_class, latitude, longitude, Month) |>
+  mutate(fire_size_class = as.factor(fire_size_class))
+
+set.seed(2)
+train_rows <- sample(nrow(fire_full_data), nrow(fire_full_data) * 0.5)
+
+fire_full_training <- fire_full_data[train_rows, ]
+fire_full_testing  <- fire_full_data[-train_rows, ]
+```
+
+```{r warning = FALSE}
+final_rf_model <- ranger(fire_size_class ~ latitude + longitude + Month,
+                         data = fire_full_training,
+                         classification = TRUE,
+                         num.trees = 500,
+                         class.weights = class_weights, 
+                         probability = FALSE,
+                         oob.error = TRUE, 
+                         verbose = FALSE) 
+```
+```{r  warning = FALSE}
+# # Assess OOB Accuracy
+# final_rf_model$prediction.error
+```
+```{r  warning = FALSE}
+# Predict on testing
+rf_predictions <- predict(final_rf_model, data = fire_full_testing)$predictions
+
+# Confusion matrix
+conf_matrix_rf <- table(Predicted = rf_predictions, Actual = fire_full_testing$fire_size_class)
+
+# Accuracy
+accuracy_rf <- sum(diag(conf_matrix_rf)) / sum(conf_matrix_rf)
+
+# Class-level error
+class_error <- function(conf_matrix) {
+  round(diag(conf_matrix) / colSums(conf_matrix), 2)}
+rf_class_error <- class_error(conf_matrix_rf)
+
+```
+```{r  warning = FALSE}
+# Create overall accuracy data frame
+overall_accuracy <- data.frame(
+  Metric = "Overall Accuracy",
+  Value = paste0(round(accuracy_rf *100, 2), "%")
+)
+
+# Create class-level accuracy table
+class_accuracy <- data.frame(
+  Class = names(rf_class_error),
+  Accuracy = round(rf_class_error, 2)
+)
+
+# Print both tables
+kable(overall_accuracy, caption = "Overall Accuracy",  col.names = NULL) |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+
+kable(class_accuracy, caption = "Classification Accuracy by Size Class") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 14)
+```
+Despite a moderate overall accuracy, the model performs well on the dominant fire classes, especially Class A and Class B fires, which make up the majority of fires. As observed in previous models, the accuracy drops off sharply for larger, less frequent fire classes. Notably, the model successfully classifies several of the largest fires (Classes F and G). While limited in its class-level accuracy, this is an improvement over earlier models that entirely missed these classes, which reflects the introduction of class weights to slightly favor large fire detection.
+
+
+
+
+***
+# Conclusion
+The goal of this project was to explore whether wildfire size class can be predicted using only simple spatial and temporal features - specifically latitude, longitude, and time of year. While such limited inputs are not independently capable of fully resolving fire size class, they seem to contain meaningful information about spatial and seasonal patterns in fire behavior in the U.S. The final model assessed, a Random Forest with class weighting, was able to accurately predict the size and general geographic distribution of the most common small fires. It also showed some capacity to identify rarer, large fires. This model can provide semi-reliable predictions of fire class for small fires and begins to identify higher-risk conditions for large fires, which is valuable for developing early management strategies. <br>
+Looking forward, model improvements should prioritize identifying rare, large fires, even at the cost of increased false positives. Additionally, future work should consider evaluating models within a risk-sensitive framework (prioritizing recall for large fires) rather than just overall accuracy.
+
+
+***
+# References
+- GeeksForGeeks. Major kernel functions in SVM.
+- DWBI1. (2021). SVM with RBF kernel.
+- Machine Learning Mastery. Cost-sensitive SVM for imbalanced classification.
+- Wikipedia. Support vector machine.
+- ChatGPT, May 16, 2025 (debugging and editing)
